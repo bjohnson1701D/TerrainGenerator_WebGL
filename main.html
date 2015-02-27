@@ -1,0 +1,181 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8"/>
+    <title>Test 1</title>
+    <style>
+        html, body {
+        overflow: hidden;
+        position: relative;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        }
+
+        #renderCanvas {
+        top: 0;
+        left: 0;
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        z-index: 10;
+        }
+        #mapCanvas {
+        bottom: 0;
+        right: 0;
+        position: absolute;
+        width: 200px;
+        height: 200px;
+        z-index: 20;
+        border-style: groove;
+        border-width: 3px;
+        }
+
+    </style>
+    <script src="js/Entities/Tile.js"></script>
+    <script src="libs/babylon.1.13.js"></script>
+    <script src="libs/underscore-min.js"></script>
+    <script src="js/Entities/World.js"></script>
+    <script src="js/Entities/Resource.js"></script>
+    <script src="js/Entities/Landmark.js"></script>
+    <script src="js/OverheadCamera.js"></script>
+    <script src="js/TerrainBuilder.js"></script>
+    <script src="js/Materials.js"></script>
+    <script src="js/customTileTest.js"></script>
+</head>
+
+<body>
+
+<canvas id="renderCanvas"></canvas>
+<canvas id="mapCanvas"></canvas>
+<script>
+var canvas = document.getElementById("renderCanvas");
+var engine = new BABYLON.Engine(canvas, true);
+var previous, camera, selected, scene, mapScene;
+var WORLD = new World();
+document.addEventListener("DOMContentLoaded", begin, false);
+
+var start = Date.now();
+function begin(){
+	scene = createScene();
+	materialsInit(scene);
+	generateTerrain(scene);
+	mapScene = createMap();
+	var octree = scene.createOrUpdateSelectionOctree()
+	engine.runRenderLoop(function () {
+		scene.render();
+	});
+	window.addEventListener("resize", function () {
+		engine.resize();
+	});
+}
+
+function selectTile(object){
+	if(object.hit && object.pickedMesh != null){
+		var t = object.pickedMesh;
+		if(t.name=="forest"||t.name=="mountain")
+			t = t.parent;
+		selected = t;
+		animateSelected(t.position, new BABYLON.Vector3(t.position.x, 35, t.position.z),t,selectedAnimation);
+		animateSelected(camera.position, new BABYLON.Vector3(t.position.x, 60, t.position.z),camera,cameraAnimation);
+		animateSelected(camera.rotation, new BABYLON.Vector3(1.569129661691616, 0, -0),camera,cameraRotation);//Use PI instead
+		console.log("SELECTED "+t.type+" AT X:"+t.loc.x+" Z:"+t.loc.z);
+	}
+}
+
+function deselectTile(){
+	if(selected!=undefined){
+		animateSelected(selected.position, new BABYLON.Vector3(selected.position.x, 0, selected.position.z)
+		,selected,selectedAnimation, function(){selected=undefined});
+	}
+}
+
+var createScene = function () {
+    var scene = new BABYLON.Scene(engine);
+    camera = new BABYLON.FreeCamera("camera1", new BABYLON.Vector3(WORLD.actualSize/2, 60, WORLD.actualSize/2), scene);
+    camera.setTarget(new BABYLON.Vector3(camera.position.x, 0, camera.position.z+.1));
+    attachCustomControl(camera, canvas, false);
+    return scene;
+};
+var mapGap = .1;
+var createMap = function(){
+	var mapCanvas = document.getElementById("mapCanvas");
+	var mapEngine = new BABYLON.Engine(mapCanvas, true);
+	mapScene = new BABYLON.Scene(mapEngine);
+	var size = WORLD.size;
+	var offset = size*mapGap
+    var mapCamera = new BABYLON.FreeCamera("camera2", new BABYLON.Vector3((size/2)+(offset/2), size+offset , (size/2)+(offset/2)), mapScene);
+    mapCanvas.addEventListener("mouseup", function(evt){
+		var o = mapCanvas.width/WORLD.size;//4
+		var x = evt.layerX;
+		var y = 200 - evt.layerY;
+		if(y<0)y=0;
+		if(y>200)y=200;
+		if(x<0)x=0;
+		if(x>200)x=200;
+		camera.position.x = Math.floor(x/o) * WORLD.tileSize;
+		camera.position.z = Math.floor(y/o) * WORLD.tileSize;
+	}, false);
+	mapCamera.setTarget(new BABYLON.Vector3(mapCamera.position.x, 0, mapCamera.position.z+.1));
+	_.each(WORLD.tiles,function(tile){
+		var size = 1;
+		var ground = new BABYLON.Mesh.CreatePlane("ground2",size,mapScene);
+		ground.rotation.x = Math.PI/2;
+		ground.position.z = tile.z + (tile.z * mapGap);
+		ground.position.x = tile.x + (tile.x * mapGap);
+		ground.position.y = -1;
+		ground.material = new BABYLON.StandardMaterial("texture1", mapScene);
+		ground.material.emissiveColor = mats[tile.type].simple;
+		generateMapResources(tile,-(size/3), -(size/3), tile.resources.sw);
+		generateMapResources(tile,(size/3), -(size/3), tile.resources.se);
+		generateMapResources(tile,(size/3), -(size/3), tile.resources.nw);
+		generateMapResources(tile,(size/3), (size/3), tile.resources.ne);
+		generateMapResources(tile,-(size/3), 0, tile.resources.w);
+		generateMapResources(tile,(size/3), 0, tile.resources.e);
+		generateMapResources(tile,0, -(size/3), tile.resources.s);
+		generateMapResources(tile, 0, (size/3), tile.resources.n);
+		generateMapResources(tile, 0, 0, tile.resources.c);
+	});//TODO: merge planes.
+	mapEngine.runRenderLoop(function () {
+		//mapScene.render();//static no need to constantly render.
+	});
+	mapScene.render();
+    return mapScene;
+};
+
+function generateMapResources(tile, xo, zo, r){
+	if(r==undefined||r=="")
+		return;
+	var ground = new BABYLON.Mesh.CreatePlane("groundx",1/3,mapScene);
+	ground.rotation.x = Math.PI/2;
+	ground.position.z = tile.z + (tile.z * mapGap) + zo;
+	ground.position.x = tile.x + (tile.x * mapGap) + xo;
+	ground.position.y = -.9;
+	ground.material = new BABYLON.StandardMaterial("texture1", mapScene);
+	ground.material.emissiveColor = mats[r.type].simple;
+}	
+    var selectedAnimation = new BABYLON.Animation("selectedAnimation", "position", 30, BABYLON.Animation.ANIMATIONTYPE_VECTOR3, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    var cameraAnimation = new BABYLON.Animation("cameraAnimation", "position", 30, BABYLON.Animation.ANIMATIONTYPE_VECTOR3, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    var cameraRotation = new BABYLON.Animation("cameraRotation", "rotation", 30, BABYLON.Animation.ANIMATIONTYPE_VECTOR3, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    var selectedRotation = new BABYLON.Animation("selectedRotation", "rotation", 30, BABYLON.Animation.ANIMATIONTYPE_VECTOR3, BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT);
+    function animateSelected(start,finish,object,animation,callback){
+		var keys = [];
+		keys.push({frame: 0,value: start});
+		keys.push({frame: 10,value: finish});
+		animation.setKeys(keys);
+		object.animations.push(animation);
+		scene.beginAnimation(object, 0, 10, false, 1, function(){
+			if(callback!=undefined){
+				callback();
+			}
+			object.animations.pop();
+		});
+	}
+
+	
+	
+
+</script>
+</body>
+</html>
